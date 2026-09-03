@@ -35,9 +35,9 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -903,9 +903,9 @@ fun InAppMediaPlayerDialog(
                                             .testTag("btn_player_mute")
                                     ) {
                                         val volIcon = when {
-                                            isMuted || volume == 0f -> Icons.Default.VolumeOff
-                                            volume < 0.5f -> Icons.Default.VolumeDown
-                                            else -> Icons.Default.VolumeUp
+                                            isMuted || volume == 0f -> Icons.AutoMirrored.Filled.VolumeOff
+                                            volume < 0.5f -> Icons.AutoMirrored.Filled.VolumeDown
+                                            else -> Icons.AutoMirrored.Filled.VolumeUp
                                         }
                                         Icon(
                                             imageVector = volIcon,

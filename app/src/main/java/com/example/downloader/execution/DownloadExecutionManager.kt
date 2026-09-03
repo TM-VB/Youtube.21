@@ -372,6 +372,7 @@ class DownloadExecutionManager(
 
             if (canAutoRetry) {
                 val delayMs = RetryPolicy.getBackoffDelayMs(currentTask.retryCount)
+                cancelPendingRetry(taskId)
                 scheduledRetryRunIds[taskId] = runId
 
                 val retryJob = scope.launch {

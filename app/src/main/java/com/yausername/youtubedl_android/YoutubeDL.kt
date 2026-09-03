@@ -211,8 +211,8 @@ class YoutubeDL private constructor() {
                 val body = resp.body?.string()
                 if (!body.isNullOrBlank()) {
                     val json = JSONObject(body)
-                    val t = json.optString("title", null)
-                    val a = json.optString("author_name", null)
+                    val t = if (json.has("title")) json.getString("title") else null
+                    val a = if (json.has("author_name")) json.getString("author_name") else null
                     Pair(t, a)
                 } else Pair(null, null)
             } else Pair(null, null)

@@ -53,17 +53,30 @@ class DownloadQueueCoordinator(
             }
 
             val queuedTasks = repository.getQueuedTasks()
+                .filter { task ->
+                    val job = activeJobs[task.id]
+                    job == null || !job.isActive
+                }
+                .distinctBy { it.id }
+
             val tasksToStart = queuedTasks.take(availableSlots)
 
             for (task in tasksToStart) {
                 val existingJob = activeJobs[task.id]
                 if (existingJob == null || !existingJob.isActive) {
                     val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-                        onStartTask(task.id)
+                        try {
+                            onStartTask(task.id)
+                        } catch (t: Throwable) {
+                            if (t is kotlinx.coroutines.CancellationException) {
+                                throw t
+                            }
+                        }
                     }
                     job.invokeOnCompletion {
                         if (activeJobs.remove(task.id, job)) {
                             _activeDownloadCount.value = activeJobs.size
+                            scope.launch { processQueue() }
                         }
                     }
                     activeJobs[task.id] = job

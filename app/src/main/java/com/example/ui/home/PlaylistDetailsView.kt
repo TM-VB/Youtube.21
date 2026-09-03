@@ -20,7 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.FeaturedPlayList
+import androidx.compose.material.icons.automirrored.filled.FeaturedPlayList
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Timer
@@ -131,7 +131,7 @@ fun PlaylistDetailsView(
                         )
                     } else {
                         Icon(
-                            imageVector = Icons.Default.FeaturedPlayList,
+                            imageVector = Icons.AutoMirrored.Filled.FeaturedPlayList,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(32.dp)

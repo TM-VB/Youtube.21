@@ -1,5 +1,5 @@
 {
-  "name": "Youtube.20",
+  "name": "Youtube.21",
   "description": "YouTube video and audio downloader and media manager",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

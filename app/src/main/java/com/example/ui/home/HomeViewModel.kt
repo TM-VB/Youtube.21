@@ -265,25 +265,21 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val selection = SmartFormatEngine.selectByPreset(formats, simplePreset)
-        if (selection != null) {
-            val targetTab = when {
-                preset == QualityPreset.BEST_AUDIO -> FormatTab.AUDIO_ONLY
-                selection.videoFormat?.isVideoAndAudio == true -> FormatTab.VIDEO_AND_AUDIO
-                selection.videoFormat?.isVideoOnly == true -> FormatTab.VIDEO_ONLY
-                else -> current.activeTab
-            }
-
-            YtDlpLogger.logFormatSelected(selection.formatSelector, false)
-            _uiState.value = current.copy(
-                selectedSelection = selection,
-                selectedFormat = selection.videoFormat ?: selection.audioFormat,
-                activePreset = preset,
-                activeTab = targetTab,
-                isManualInputEnabled = false
-            )
-        } else {
-            _uiState.value = current.copy(activePreset = preset)
+        val targetTab = when {
+            preset == QualityPreset.BEST_AUDIO -> FormatTab.AUDIO_ONLY
+            selection.videoFormat?.isVideoAndAudio == true -> FormatTab.VIDEO_AND_AUDIO
+            selection.videoFormat?.isVideoOnly == true -> FormatTab.VIDEO_ONLY
+            else -> current.activeTab
         }
+
+        YtDlpLogger.logFormatSelected(selection.formatSelector, false)
+        _uiState.value = current.copy(
+            selectedSelection = selection,
+            selectedFormat = selection.videoFormat ?: selection.audioFormat,
+            activePreset = preset,
+            activeTab = targetTab,
+            isManualInputEnabled = false
+        )
     }
 
     fun toggleManualInput(enabled: Boolean) {

@@ -25,7 +25,7 @@ sealed interface NetworkState {
  * Monitors system connectivity using Android ConnectivityManager NetworkCallbacks.
  * Accurately tracks Wi-Fi, Cellular, Ethernet, and Metered connection states.
  */
-class NetworkMonitor(private val context: Context) {
+open class NetworkMonitor(private val context: Context) {
 
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -79,11 +79,11 @@ class NetworkMonitor(private val context: Context) {
         }
     }
 
-    fun isOnline(): Boolean {
+    open fun isOnline(): Boolean {
         return getCurrentState().isConnected
     }
 
-    fun isWifiConnected(): Boolean {
+    open fun isWifiConnected(): Boolean {
         val activeNetwork = connectivityManager?.activeNetwork ?: return false
         val caps = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
         return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)

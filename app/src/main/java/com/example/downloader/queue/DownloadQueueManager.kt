@@ -71,7 +71,11 @@ class DownloadQueueManager(
         runIdCounter = runIdCounter,
         scope = scope,
         onExecutionFinished = { taskId ->
-            activeJobs.remove(taskId)
+            activeJobs[taskId]?.let { job ->
+                if (!job.isActive) {
+                    activeJobs.remove(taskId, job)
+                }
+            }
             coordinator.updateActiveCount(activeJobs.size)
             coordinator.processQueue()
         },

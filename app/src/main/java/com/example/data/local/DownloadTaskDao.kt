@@ -83,7 +83,9 @@ interface DownloadTaskDao {
         SET status = :status,
             stage = :stage,
             runId = :runId
-        WHERE id = :id AND status NOT IN ('PAUSED', 'CANCELLED', 'COMPLETED', 'FAILED')
+        WHERE id = :id 
+          AND (runId = 0 OR runId = :runId) 
+          AND status NOT IN ('PAUSED', 'CANCELLED', 'COMPLETED', 'FAILED')
     """)
     suspend fun updateActiveState(
         id: String,
@@ -115,7 +117,7 @@ interface DownloadTaskDao {
             downloadedSize = CASE WHEN :downloadedSize != '' THEN :downloadedSize ELSE downloadedSize END,
             totalSize = CASE WHEN :totalSize != '' THEN :totalSize ELSE totalSize END,
             completedAt = :completedAt
-        WHERE id = :id AND runId = :runId AND status NOT IN ('PAUSED', 'CANCELLED')
+        WHERE id = :id AND runId = :runId AND status NOT IN ('PAUSED', 'CANCELLED', 'FAILED')
     """)
     suspend fun markCompleted(
         id: String,

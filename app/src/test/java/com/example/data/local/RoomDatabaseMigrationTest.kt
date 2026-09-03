@@ -19,6 +19,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 
 /**
@@ -32,6 +33,7 @@ import java.io.File
  * 5. Complete absence of destructive migration.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class RoomDatabaseMigrationTest {
 
     @get:Rule

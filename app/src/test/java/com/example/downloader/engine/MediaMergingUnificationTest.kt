@@ -22,6 +22,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -39,6 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger
  *    download -> merge (when needed) -> cut (when needed) -> publish.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class MediaMergingUnificationTest {
 
     @get:Rule

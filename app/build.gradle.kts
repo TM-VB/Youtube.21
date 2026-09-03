@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.Base64
 
 plugins {
   alias(libs.plugins.android.application)
@@ -9,16 +10,31 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
-val releaseKeystorePath: String? = System.getenv("RELEASE_KEYSTORE_PATH") ?: System.getenv("KEYSTORE_PATH")
-val releaseStorePassword: String? = System.getenv("RELEASE_STORE_PASSWORD") ?: System.getenv("STORE_PASSWORD")
-val releaseKeyAlias: String? = System.getenv("RELEASE_KEY_ALIAS") ?: System.getenv("KEY_ALIAS")
-val releaseKeyPassword: String? = System.getenv("RELEASE_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")
+val releaseKeystoreBase64: String? = System.getenv("RELEASE_KEYSTORE_BASE64")
+val releaseStorePassword: String? = System.getenv("RELEASE_STORE_PASSWORD")
+val releaseKeyAlias: String? = System.getenv("RELEASE_KEY_ALIAS")
+val releaseKeyPassword: String? = System.getenv("RELEASE_KEY_PASSWORD")
 
-val hasReleaseSigning: Boolean = !releaseKeystorePath.isNullOrBlank() &&
-    !releaseStorePassword.isNullOrBlank() &&
-    !releaseKeyAlias.isNullOrBlank() &&
-    !releaseKeyPassword.isNullOrBlank() &&
-    file(releaseKeystorePath).exists()
+// Materialize keystore from Base64 secret if provided into a secure temporary location
+val decodedKeystoreFile: File? = if (!releaseKeystoreBase64.isNullOrBlank()) {
+  val decodedBytes = Base64.getDecoder().decode(releaseKeystoreBase64.trim())
+  val tempFile = file("${layout.buildDirectory.get().asFile}/intermediates/signing/release.keystore")
+  tempFile.parentFile.mkdirs()
+  tempFile.writeBytes(decodedBytes)
+  tempFile
+} else {
+  val directPath = System.getenv("RELEASE_KEYSTORE_PATH")
+  if (!directPath.isNullOrBlank() && file(directPath).exists()) file(directPath) else null
+}
+
+val missingReleaseSigningVars = buildList {
+  if (releaseKeystoreBase64.isNullOrBlank() && decodedKeystoreFile == null) add("RELEASE_KEYSTORE_BASE64")
+  if (releaseStorePassword.isNullOrBlank()) add("RELEASE_STORE_PASSWORD")
+  if (releaseKeyAlias.isNullOrBlank()) add("RELEASE_KEY_ALIAS")
+  if (releaseKeyPassword.isNullOrBlank()) add("RELEASE_KEY_PASSWORD")
+}
+
+val hasReleaseSigning: Boolean = missingReleaseSigningVars.isEmpty() && decodedKeystoreFile != null && decodedKeystoreFile.exists()
 
 android {
   namespace = "com.example"
@@ -35,9 +51,9 @@ android {
   }
 
   signingConfigs {
-    if (hasReleaseSigning) {
+    if (hasReleaseSigning && decodedKeystoreFile != null) {
       create("release") {
-        storeFile = file(releaseKeystorePath!!)
+        storeFile = decodedKeystoreFile
         storePassword = releaseStorePassword
         keyAlias = releaseKeyAlias
         keyPassword = releaseKeyPassword
@@ -72,7 +88,20 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      isReturnDefaultValues = true
+      all {
+        it.jvmArgs(
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED"
+        )
+      }
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -166,14 +195,31 @@ abstract class VerifyReleaseSigningTask : DefaultTask() {
   @get:Input
   abstract val hasSigning: Property<Boolean>
 
+  @get:Input
+  abstract val missingVariables: ListProperty<String>
+
   @TaskAction
   fun verify() {
     if (!hasSigning.get()) {
+      val missingList = missingVariables.get()
+      val details = if (missingList.isNotEmpty()) {
+        "Missing release signing configuration:\n" + missingList.joinToString("\n") { "  - $it" }
+      } else {
+        "Release keystore file does not exist or is invalid."
+      }
       throw GradleException(
-        "Release signing credentials are missing or incomplete. " +
-        "To build a release APK or App Bundle, the following environment variables must be provided: " +
-        "KEYSTORE_PATH (or RELEASE_KEYSTORE_PATH), STORE_PASSWORD (or RELEASE_STORE_PASSWORD), " +
-        "KEY_ALIAS (or RELEASE_KEY_ALIAS), and KEY_PASSWORD (or RELEASE_KEY_PASSWORD), and the keystore file must exist."
+        """
+        ================================================================================
+        RELEASE SIGNING FAILED:
+        $details
+        
+        Required environment variables:
+          - RELEASE_KEYSTORE_BASE64
+          - RELEASE_STORE_PASSWORD
+          - RELEASE_KEY_ALIAS
+          - RELEASE_KEY_PASSWORD
+        ================================================================================
+        """.trimIndent()
       )
     }
   }
@@ -181,6 +227,7 @@ abstract class VerifyReleaseSigningTask : DefaultTask() {
 
 val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {
   hasSigning.set(hasReleaseSigning)
+  missingVariables.set(missingReleaseSigningVars)
 }
 
 tasks.matching {

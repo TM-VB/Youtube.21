@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * in-memory Room database, and strict assertions without arbitrary thread sleeping.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class ProductionLifecycleTestSuite {
 
     @get:Rule
@@ -1172,5 +1172,203 @@ class ProductionLifecycleTestSuite {
         assertTrue("instance2 must see cancellation from instance1", instance2.isTaskCancelled(taskId, runId))
         assertTrue("instance1 must see cancellation", instance1.isTaskCancelled(taskId, runId))
         assertTrue("compatInstance is ready and functional", compatInstance.isReady() || !compatInstance.getDeviceAbis().isEmpty())
+    }
+
+    @Test
+    fun testCancelDuringPreparing_PreventsDownloadingAndMarksCancelled(): Unit = runBlocking {
+        val taskId = "cuj_cancel_during_preparing"
+        val initialTask = DownloadTaskEntity(
+            id = taskId,
+            url = "https://www.youtube.com/watch?v=prep_cancel",
+            title = "Test Prep Cancel",
+            status = DownloadStatus.QUEUED,
+            stage = DownloadStage.QUEUED,
+            createdAt = System.currentTimeMillis()
+        )
+        dao.insertTask(initialTask)
+
+        // Claim runId 101 for preparing
+        val preparingUpdated = dao.updateActiveState(
+            id = taskId,
+            runId = 101L,
+            status = DownloadStatus.PREPARING,
+            stage = DownloadStage.PREPARING
+        )
+        assertEquals("Should transition to PREPARING", 1, preparingUpdated)
+
+        // Cancel arrives before DOWNLOADING transition
+        val cancelUpdated = dao.markFailedOrCancelled(
+            id = taskId,
+            runId = 101L,
+            status = DownloadStatus.CANCELLED,
+            errorMessage = "User cancelled"
+        )
+        assertEquals("Should mark as CANCELLED", 1, cancelUpdated)
+
+        // Late DOWNLOADING transition must fail to overwrite CANCELLED state
+        val lateDownloadAttempt = dao.updateActiveState(
+            id = taskId,
+            runId = 101L,
+            status = DownloadStatus.DOWNLOADING,
+            stage = DownloadStage.DOWNLOADING
+        )
+        assertEquals("Late DOWNLOADING update must be rejected", 0, lateDownloadAttempt)
+
+        val finalTask = dao.getTaskByIdSync(taskId)
+        assertNotNull(finalTask)
+        assertEquals(DownloadStatus.CANCELLED, finalTask?.status)
+    }
+
+    @Test
+    fun testRetryThenCancel_CancelsPendingRetryJob(): Unit = runBlocking {
+        val taskId = "cuj_retry_then_cancel"
+        val initialTask = DownloadTaskEntity(
+            id = taskId,
+            url = "https://www.youtube.com/watch?v=retry_cancel",
+            title = "Retry Cancel",
+            status = DownloadStatus.DOWNLOADING,
+            stage = DownloadStage.DOWNLOADING,
+            retryCount = 1,
+            errorMessage = "",
+            runId = 201L,
+            createdAt = System.currentTimeMillis()
+        )
+        dao.insertTask(initialTask)
+
+        val activeRunIds = ConcurrentHashMap<String, Long>()
+        val runIdCounter = java.util.concurrent.atomic.AtomicLong(200L)
+        var retryDispatched = false
+        val settings = AppSettings.getInstance(context).apply { setAutoRetry(true) }
+
+        val execManager = DownloadExecutionManager(
+            context = context,
+            repository = repository,
+            appSettings = settings,
+            downloadEngine = object : DownloadEngine {
+                override suspend fun download(request: DownloadRequest, onProgress: (DownloadProgress) -> Unit) =
+                    Result.failure<File>(DownloadError.NetworkError("Network failed"))
+                override suspend fun download(task: com.example.domain.model.DownloadTask, onProgress: (DownloadProgress) -> Unit) =
+                    Result.failure<File>(DownloadError.NetworkError("Network failed"))
+                override suspend fun cancel(taskId: String) {}
+            },
+            notificationManager = com.example.downloader.notification.DownloadNotificationManager(context),
+            activeRunIds = activeRunIds,
+            runIdCounter = runIdCounter,
+            scope = this,
+            onExecutionFinished = {},
+            onRetryRequestedSingle = { retryDispatched = true }
+        )
+
+        // Trigger failure to schedule auto retry
+        activeRunIds[taskId] = 201L
+        execManager.handleDownloadFailure(
+            taskId = taskId,
+            runId = 201L,
+            originalTask = initialTask,
+            error = DownloadError.NetworkError("Transient failure")
+        )
+
+        assertTrue("Retry job should be pending", execManager.hasPendingRetry(taskId))
+
+        // User cancels download before retry delay elapses
+        execManager.cancelPendingRetry(taskId)
+        assertFalse("Retry job must be cancelled immediately", execManager.hasPendingRetry(taskId))
+
+        // Update DB to CANCELLED
+        dao.markFailedOrCancelled(taskId, 201L, DownloadStatus.CANCELLED, "Cancelled by user")
+
+        // Wait to verify retry is never dispatched
+        delay(100)
+        assertFalse("Retry callback must never be invoked after cancellation", retryDispatched)
+        assertEquals(DownloadStatus.CANCELLED, dao.getTaskByIdSync(taskId)?.status)
+    }
+
+    @Test
+    fun testQueueCoordinator_DuplicateTasksAndFiltering() = runBlocking {
+        val queuedTasks = listOf(
+            DownloadTaskEntity(id = "T1", url = "http://1", title = "T1", status = DownloadStatus.QUEUED, stage = DownloadStage.QUEUED, createdAt = 1),
+            DownloadTaskEntity(id = "T1", url = "http://1", title = "T1", status = DownloadStatus.QUEUED, stage = DownloadStage.QUEUED, createdAt = 1),
+            DownloadTaskEntity(id = "T2", url = "http://2", title = "T2", status = DownloadStatus.QUEUED, stage = DownloadStage.QUEUED, createdAt = 2),
+            DownloadTaskEntity(id = "T3", url = "http://3", title = "T3", status = DownloadStatus.QUEUED, stage = DownloadStage.QUEUED, createdAt = 3)
+        )
+
+        for (task in queuedTasks) {
+            dao.insertTask(task)
+        }
+
+        val activeJobs = ConcurrentHashMap<String, Job>()
+        val startedTasks = mutableListOf<String>()
+        val t2Started = CompletableDeferred<Unit>()
+
+        // Simulate T1 already has an active running Job
+        val dummyJob = launch { delay(1000) }
+        activeJobs["T1"] = dummyJob
+
+        val settings = AppSettings.getInstance(context).apply { setConcurrentDownloads(2) }
+        val onlineNetworkMonitor = object : NetworkMonitor(context) {
+            override fun isOnline() = true
+        }
+        val coordinator = DownloadQueueCoordinator(
+            repository = repository,
+            appSettings = settings,
+            networkMonitor = onlineNetworkMonitor,
+            activeJobs = activeJobs,
+            scope = this,
+            onStartTask = { taskId ->
+                startedTasks.add(taskId)
+                t2Started.complete(Unit)
+                delay(5000) // Keep active during test
+            }
+        )
+
+        coordinator.processQueue()
+        t2Started.await()
+
+        // Available slots = 2 - 1 = 1 slot.
+        // T1 is already active in activeJobs, so it must be filtered out.
+        // Deduplicated remaining queue: [T2, T3].
+        // 1 available slot must take exactly T2.
+        assertEquals("Must start exactly 1 task into the 1 available slot", 1, startedTasks.size)
+        assertEquals("Must start T2", "T2", startedTasks[0])
+
+        dummyJob.cancel()
+        activeJobs["T2"]?.cancel()
+    }
+
+    @Test
+    fun testQueueSlotReplenishment_OnJobCompletion() = runBlocking {
+        val activeJobs = ConcurrentHashMap<String, Job>()
+        val finishedTasks = mutableListOf<String>()
+
+        val settings = AppSettings.getInstance(context).apply { setConcurrentDownloads(1) }
+        val onlineNetworkMonitor = object : NetworkMonitor(context) {
+            override fun isOnline() = true
+        }
+        val coordinator = DownloadQueueCoordinator(
+            repository = repository,
+            appSettings = settings,
+            networkMonitor = onlineNetworkMonitor,
+            activeJobs = activeJobs,
+            scope = this,
+            onStartTask = { taskId ->
+                dao.updateActiveState(taskId, 1L, DownloadStatus.DOWNLOADING, DownloadStage.DOWNLOADING)
+                delay(50)
+                finishedTasks.add(taskId)
+                dao.markCompleted(taskId, 1L, "", "", "", "", System.currentTimeMillis())
+            }
+        )
+
+        dao.insertTask(DownloadTaskEntity(id = "task_seq_1", url = "http://s1", title = "Seq 1", status = DownloadStatus.QUEUED, stage = DownloadStage.QUEUED, createdAt = 1))
+        dao.insertTask(DownloadTaskEntity(id = "task_seq_2", url = "http://s2", title = "Seq 2", status = DownloadStatus.QUEUED, stage = DownloadStage.QUEUED, createdAt = 2))
+
+        coordinator.processQueue()
+        delay(20)
+        assertEquals("Active download count should be 1", 1, coordinator.activeDownloadCount.value)
+
+        // Wait for first task to finish and invokeOnCompletion to automatically processQueue for task_seq_2
+        delay(250)
+
+        assertTrue("First task must finish", finishedTasks.contains("task_seq_1"))
+        assertTrue("Second task must automatically start and finish due to queue replenishment", finishedTasks.contains("task_seq_2"))
     }
 }

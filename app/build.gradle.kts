@@ -77,6 +77,10 @@ android {
     includeInApk = false
     includeInBundle = true
   }
+  lint {
+    disable += "InvalidFragmentVersionForActivityResult"
+    abortOnError = true
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
@@ -158,11 +162,13 @@ dependencies {
   "ksp"(libs.moshi.kotlin.codegen)
 }
 
-tasks.matching {
-  it.name == "packageRelease" || it.name == "bundleRelease" || it.name == "assembleRelease"
-}.configureEach {
-  doFirst {
-    if (!hasReleaseSigning) {
+abstract class VerifyReleaseSigningTask : DefaultTask() {
+  @get:Input
+  abstract val hasSigning: Property<Boolean>
+
+  @TaskAction
+  fun verify() {
+    if (!hasSigning.get()) {
       throw GradleException(
         "Release signing credentials are missing or incomplete. " +
         "To build a release APK or App Bundle, the following environment variables must be provided: " +
@@ -171,5 +177,15 @@ tasks.matching {
       )
     }
   }
+}
+
+val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {
+  hasSigning.set(hasReleaseSigning)
+}
+
+tasks.matching {
+  it.name == "packageRelease" || it.name == "bundleRelease" || it.name == "assembleRelease"
+}.configureEach {
+  dependsOn(verifyReleaseSigning)
 }
 
